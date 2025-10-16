@@ -239,6 +239,19 @@ def thumbnails_fallback(webdriver):
     log.info("Attempting to find thumbnails using fallback")
     all_images = wd.find_elements(By.TAG_NAME, "img")
     thumbnails = []
+    for image in all_images:
+        try:
+            size = image.size
+            if 50 < size['width'] < 400 and 50 < size['height'] < 400: #generally thumbnails between 100 to 300px
+                src = image.get_attribute("src") or image.get_attribute("data-src")
+                if src and image.is_displayed(): #checks if src exists and image is visible
+                    thumbnails.append(image)
+        except:
+            continue
+    
+    log.info(f"Fallback found {len(thumbnails)}")
+    return thumbnails
+
 
 
 def get_images_from_google(webdriver, search_request:str ,delay:int, max_images:int):
