@@ -6,5 +6,30 @@ dist/
 wheels/
 *.egg-info
 
+# Images and data
+images/
+*.jpg
+*.jpeg
+*.png
+
+# Logs
+*.log
+*.pkl
+
+# Debug files
+debug_*.html
+
+
 # Virtual environments
 .venv
+
+# IDE/Editor files
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+
+# OS files
+Thumbs.db
