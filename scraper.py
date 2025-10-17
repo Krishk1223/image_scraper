@@ -2,7 +2,12 @@ import undetected_chromedriver as uc
 from selenium.webdriver.common.by import By
 from selenium.webdriver.common.keys import Keys
 from selenium.webdriver.support.ui import WebDriverWait
-from selenium.common.exceptions import ElementClickInterceptedException, NoSuchElementException, TimeoutException, StaleElementReferenceException
+from selenium.common.exceptions import (
+    ElementClickInterceptedException, 
+    NoSuchElementException,
+    TimeoutException,
+    StaleElementReferenceException
+)
 from selenium.webdriver.support import expected_conditions as EC
 import requests
 import io
@@ -13,44 +18,56 @@ import logging
 import random
 from datetime import datetime
 
-#CONFIGURATION: 
-DEBUG_MODE = True
-HEADLESS = False
-SELECTOR_VERSION = "2025-10-16"
-DELAY = 1
+try:
+    from .config import (
+        DEBUG_MODE,
+        HEADLESS,
+        SELECTOR_VERSION,
+        DELAY,
+        THUMBNAIL_SELECTORS,
+        FULL_IMAGE_SELECTORS,
+        ACCEPT_COOKIES_SELECTORS,
+        REJECT_COOKIES_SELECTORS
+    )
+except ImportError:
+    #CONFIGURATION if importing config.py fails: 
+    DEBUG_MODE = True
+    HEADLESS = False
+    SELECTOR_VERSION = "2025-10-16"
+    DELAY = 1
 
-# SELECTORS FOR IMAGE SCRAPING:
+    # SELECTORS FOR IMAGE SCRAPING:
 
-THUMBNAIL_SELECTORS = [
-    "img.rg_i", #default
-    "img.Q4LuWd", #alternative
-    "img.YQ4gaf", #older alternative
-]
+    THUMBNAIL_SELECTORS = [
+        "img.rg_i", #default
+        "img.Q4LuWd", #alternative
+        "img.YQ4gaf", #older alternative
+    ]
 
-FULL_IMAGE_SELECTORS = [
-    "img.sFlh5c.FyHeAf", #default
-    "img.sFlh5c", 
-    "img.n3VNCb",
-    "img.iPVvYb", 
-    "div.islrc img",
-    "img.r48jcc",
-    "img.VFACy",     
-    "a.wXeWr.fxgdke img", 
-]
+    FULL_IMAGE_SELECTORS = [
+        "img.sFlh5c.FyHeAf", #default
+        "img.sFlh5c", 
+        "img.n3VNCb",
+        "img.iPVvYb", 
+        "div.islrc img",
+        "img.r48jcc",
+        "img.VFACy",     
+        "a.wXeWr.fxgdke img", 
+    ]
 
-ACCEPT_COOKIES_SELECTORS = [
-    "button#L2AGLb", #default accept cookies button
-    "button[aria-label*='Accept']", #aria label Accept
-    "button[aria-label*='accept']", #lowecase handling
-    "//button[contains(text(), 'Accept')]",  # XPath
-    "//button[contains(text(), 'I agree')]", # XPath alternative
-]
+    ACCEPT_COOKIES_SELECTORS = [
+        "button#L2AGLb", #default accept cookies button
+        "button[aria-label*='Accept']", #aria label Accept
+        "button[aria-label*='accept']", #lowecase handling
+        "//button[contains(text(), 'Accept')]",  # XPath
+        "//button[contains(text(), 'I agree')]", # XPath alternative
+    ]
 
-REJECT_COOKIES_SELECTORS = [
-    "button#W0wltc", #reject all cookies button
-    "button[aria-label*='Reject']", #aria label reject
-    "//button[contains(text(), 'Reject')]", #XPath
-]
+    REJECT_COOKIES_SELECTORS = [
+        "button#W0wltc", #reject all cookies button
+        "button[aria-label*='Reject']", #aria label reject
+        "//button[contains(text(), 'Reject')]", #XPath
+    ]
 
 # LOG SETUP:
 logging.basicConfig( #logger setup in info mode with details about time, lvl and message
@@ -62,6 +79,31 @@ logging.basicConfig( #logger setup in info mode with details about time, lvl and
     ]
 )
 log = logging.getLogger(__name__) #logger instance
+
+def driver_setup(headless:bool = False):
+    """
+    Sets up undetected chromedriver with options
+    """
+    driver_options = uc.ChromeOptions()
+
+    #Headless setup:
+    if headless:
+        driver_options.add_argument("--headless=new")
+        log.info("Running driver in headless mode")
+
+    #Additional options for stability:
+    driver_options.add_argument("--no-sandbox")
+    driver_options.add_argument("--disable-dev-shm-usage")
+    driver_options.add_argument("--window-size=1920,1080")
+
+    # Create undetected Chrome instance
+    try:
+        wd = uc.Chrome(options=driver_options, version_main=None)
+        log.info("Undetected Chrome initialized successfully")
+        return wd
+    except Exception as e:
+        log.error(f"Failed to initialize Chrome: {e}")
+        return None
 
 
 def main():
@@ -90,23 +132,19 @@ def main():
 
     # Undetected Chrome setup
     driver_options = uc.ChromeOptions()
-    
-    #Headless setup:
-    if HEADLESS:
-        driver_options.add_argument("--headless=new")
-        log.info("Running driver in headless mode")
 
-    #Additional options for stability:
-    driver_options.add_argument("--no-sandbox")
-    driver_options.add_argument("--disable-dev-shm-usage")
-    driver_options.add_argument("--window-size=1920,1080")
-
-    # Create undetected Chrome instance
+    headless_mode:str = ''
     try:
-        wd = uc.Chrome(options=driver_options, version_main=None)
-        log.info("Undetected Chrome initialized successfully")
-    except Exception as e:
-        log.error(f"Failed to initialize Chrome: {e}")
+        while headless_mode not in ['y','n']:
+            headless_mode = input("Would you like to run the browser in headless mode? (y/n): ").lower()
+    except KeyboardInterrupt:
+        log.info("User interrupted input, defaulting to headless mode 'n'")
+        headless_mode = 'n'
+
+    headless = (headless_mode == 'y')
+    wd = driver_setup(headless=headless)
+    if not wd:
+        log.error("Webdriver setup failed, exiting...")
         return
 
     try:
