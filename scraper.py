@@ -420,13 +420,13 @@ def valid_image(image):
     """
     #min size checks:
     width, height = image.size
-    if width < 200 or height < 200:
+    if width < 100 or height < 100:
         log.debug(f"Image is too small: {width}x{height}")
         return False, "too_small"
     
     #aspect ratio checks:
-    aspect_ratio = max(width,height)/min(width,height)
-    if aspect_ratio > 3: #arbitrary aspect ratio limit of 3:1
+    aspect_ratio:float = max(width,height)/min(width,height)
+    if aspect_ratio > 3.0: #arbitrary aspect ratio limit of 3:1
         log.debug(f"Image has poor aspect ratio: {aspect_ratio:.2f}")
         return False, "poor_aspect_ratio"
     
