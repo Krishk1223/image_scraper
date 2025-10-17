@@ -114,7 +114,7 @@ def main():
 
         #Download images based on found urls
         for i, url in enumerate(image_urls):
-            download_image(accepted_path, rejected_path, url=url, filename=f"{search_query}_{i+1}.png")
+            download_image(original_path=original_path, rejected_path=rejected_path, url=url, filename=f"{search_query}_{i+1}.png")
             download_stats[result] += 1
 
         #Logger summary of downloads:
@@ -431,32 +431,89 @@ def get_images_from_google(webdriver, search_request:str ,delay:int, max_images:
 
     return image_urls
 
+def valid_image(image):
+    """
+    Validates image by checking file format and dimensions.
+    returns validity and reason
+    """
+    #min size checks:
+    width, height = image.size
+    if width < 200 or height < 200:
+        log.info(f"Image is too small: {width}x{height}")
+        return False, "too_small"
+    
+    #aspect ratio checks:
+    aspect_ratio = max(width,height)/min(width,height)
+    if aspect_ratio > 3: #arbitrary aspect ratio limit of 3:1
+        log.info(f"Image has poor aspect ratio: {aspect_ratio:.2f}")
+        return False, "poor_aspect_ratio"
+    
+    return True, "valid"
 
-def download_image(download_path, url, file_name): #function to download image
+
+def download_image(original_path:str, rejected_path:str, url:str, file_name:str): #function to download image
     """
-    1) Make get request and fetch content from url with requests.get(url).content
-    2) convert to a binary data format with io.BytesIO
-    3) convert binary data format to image object with PIL.Image
-    4) create a file path to save image from download_path and file_name by string concatenation
-    5) open file to write in wb (write binary) mode
-    6) save image in requested format (be it PNG or JPEG or others)
-    7) print success message with file path
+    Downloads image from urls and saves to relevant path
+    returns 'success', 'failed' or 'rejected' based on outcome
     """
+
     try:
-        image_content = requests.get(url).content #makes http get request and fetches content of url
-        image_file = io.BytesIO(image_content) #stores a binary data format of image content in memory
-        image = Image.open(image_file) #converts binary data to image object
-        file_path = download_path + file_name # creates a file path to save the image by string concatenation
-        with open(file_path, "wb") as f:  #opens file to write in wb (write binary) mode
-            image.save(f, "PNG") #saves the image in a png format
+        #image content download
+        response = requests.get(url, timeout=10)
+        response.raise_for_status() #raises error for bad status codes
 
-        print(f"Great success - saved image as {file_path}")
+        #Gets image content, converts to a binary stream and opens with PIL
+        image_content = response.content
+        image_file = io.BytesIO(image_content)
+        image = Image.open(image_file).convert("RGB")
+
+        #image quality validation:
+        validity, reason = valid_image(image)
+
+        #path set up based on rejection reason:
+        if not validity:
+            reject_path = os.path.join(rejected_path,reason)
+                if not os.path.exists(reject_path):
+                    os.makedirs(reject_path)
+            #file path for rejected image of that reason, save image in path as png
+            file_path = os.path.join(reject_path, file_name)
+            with open(file_path, "wb") as f:
+                image.save(f, "PNG", quality=90)
+            
+            #log and rejection returned
+            log.info(f"Image rejected due to {reason}, saved to {file_path}")
+            return "rejected"
+        
+        #accepted image handling:
+        file_path = os.path.join(original_path, file_name)
+        with open(file_path,"wb") as f:
+            image.save(f, "PNG", quality=95)
+
+        log.info(f"Image {file_name} successfully downloaded and saved to {file_path}")
+        return "success"
+    except requests.exceptions.RequestException as e:
+        log.error(f"Failed to download image from {url}: {e}")
+        return "failed"
     except Exception as e:
-        print(f" Whoops - something fucked up twin read the error message cos I can't: {e}")
+        log.error(f"Error processing image from {url}: {e}")
+        return "failed"
+
+def save_page_source(webdriver, prefix:str = "debug"):
+    """
+    Saves page source for debugging purposes
+    """
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    filename = f"{prefix}_{timestamp}.html"
+    try:
+        with open(filename, "w", encoding="utf-8") as f:
+            f.write(webdriver.page_source())
+        log.info(f"Page source saved as {filename}")
+    except Exception as e:
+        log.error(f"Failed to save page source due to error: {e}")
 
 if __name__ == "__main__":
     main()
-    input("Press any key to exit")
+    input("\nPress enter key to exit")
 
 
 
