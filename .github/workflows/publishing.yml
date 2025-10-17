@@ -2,7 +2,7 @@ name: Publish to PyPI
 
 on:
   release:
-    types: [published]  # Triggers when you create a GitHub release
+    types: [published] 
 
 jobs:
   build:
@@ -28,10 +28,10 @@ jobs:
     runs-on: ubuntu-latest
     
     environment:
-      name: testpypi  # This must match what you set up on TestPyPI
+      name: testpypi
     
     permissions:
-      id-token: write  # CRITICAL: Allows trusted publishing
+      id-token: write 
     
     steps:
     - name: Download artifacts
