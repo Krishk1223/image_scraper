@@ -1,16 +1,16 @@
-from selenium import webdriver
+import undetected_chromedriver as uc
 from selenium.webdriver.common.by import By
 from selenium.webdriver.common.keys import Keys
 from selenium.webdriver.support.ui import WebDriverWait
-from selenium.common.exceptions import ElementClickInterceptedException, NoSuchElementException, TimeoutException
+from selenium.common.exceptions import ElementClickInterceptedException, NoSuchElementException, TimeoutException, StaleElementReferenceException
 from selenium.webdriver.support import expected_conditions as EC
-from selenium.webdriver.chrome.options import Options
 import requests
 import io
 from PIL import Image
 import time
 import os
 import logging
+import random
 from datetime import datetime
 
 #CONFIGURATION: 
@@ -18,7 +18,6 @@ DEBUG_MODE = True
 HEADLESS = False
 SELECTOR_VERSION = "2025-10-16"
 DELAY = 1
-CAPTCHA_WAIT_TIME = 120  # Max seconds to wait for user to solve CAPTCHA
 
 # SELECTORS FOR IMAGE SCRAPING:
 
@@ -52,7 +51,6 @@ REJECT_COOKIES_SELECTORS = [
     "button[aria-label*='Reject']", #aria label reject
     "//button[contains(text(), 'Reject')]", #XPath
 ]
-
 
 # LOG SETUP:
 logging.basicConfig( #logger setup in info mode with details about time, lvl and message
@@ -88,29 +86,36 @@ def main():
     #starting logs
     log.info(f"Starting image scraper for query: {query} with {max_images} images")
     log.info(f"Selector version: {SELECTOR_VERSION}, if it doesn't work please check for updates")
+    log.info("Using undetected-chromedriver to avoid bot detection")
 
-    driver_options = Options()
+    # Undetected Chrome setup
+    driver_options = uc.ChromeOptions()
     
     #Headless setup:
     if HEADLESS:
         driver_options.add_argument("--headless=new")
         log.info("Running driver in headless mode")
 
-    #Additional options to avoid detection:
-    driver_options.add_argument("--disable-blink-features=AutomationControlled")
+    #Additional options for stability:
     driver_options.add_argument("--no-sandbox")
     driver_options.add_argument("--disable-dev-shm-usage")
+    driver_options.add_argument("--window-size=1920,1080")
 
-    #webdriver instance with options:
-    wd = webdriver.Chrome(options=driver_options)
+    # Create undetected Chrome instance
+    try:
+        wd = uc.Chrome(options=driver_options, version_main=None)
+        log.info("Undetected Chrome initialized successfully")
+    except Exception as e:
+        log.error(f"Failed to initialize Chrome: {e}")
+        return
 
     try:
         #call get images function and download images from them
-        image_urls = get_images_from_google(webdriver=wd, search_request=query, delay=1, max_images=max_images)
+        image_urls = get_images_from_google(webdriver=wd, search_request=query, delay=DELAY, max_images=max_images)
 
         #No images found, saves page source if in debug mode
         if not image_urls:
-            log.error("No images found, please check selectors updated selectors or try a different query")
+            log.error("No images found, please check selectors or try a different query")
             if DEBUG_MODE:
                 save_page_source(wd, "failed_search")
             return
@@ -133,7 +138,7 @@ def main():
         log.info("+"*50)
 
     except Exception as e:
-        log.error(f"Whoops - something messed up twin read the error message cos I can't: {e}")
+        log.error(f"Error during scraping: {e}")
         if DEBUG_MODE:
             save_page_source(wd, "error")
     finally:
@@ -160,7 +165,7 @@ def save_cookies(webdriver, filename:str = "google_cookies.pkl"):
 
 def load_cookies(webdriver, filename:str = "google_cookies.pkl"):
     """
-    Loads cookeis from file to webdriver instance
+    Loads cookies from file to webdriver instance
     """
     import pickle 
 
@@ -195,7 +200,7 @@ def handle_cookies(webdriver, accept:bool=True, delay:int=5):
     """
     Handles cookie pop ups by either accepting or rejecting cookies, default accept
     """
-    #Chcks user selection
+    #Checks user selection
     selectors = ACCEPT_COOKIES_SELECTORS if accept else REJECT_COOKIES_SELECTORS
     action = "accept" if accept else "reject"
 
@@ -208,7 +213,7 @@ def handle_cookies(webdriver, accept:bool=True, delay:int=5):
             button = WebDriverWait(webdriver, delay).until(EC.element_to_be_clickable((method, selector)))
             button.click()
             log.info(f"Cookies {action}ed")
-            time.sleep(1) #wait for 2 seconds after clicking
+            time.sleep(1)
             return True
         except TimeoutException: #didn't find anything with selector
             log.debug(f"No action found using {selector}, trying next selector")
@@ -218,81 +223,6 @@ def handle_cookies(webdriver, accept:bool=True, delay:int=5):
             continue
 
     log.info("No cookie pop up found or selectors failed")
-    return False
-
-def check_for_captcha(webdriver):
-    """
-    Checks if a CAPTCHA is present on the page
-    Returns True if CAPTCHA detected, False otherwise
-    """
-    captcha_indicators = [
-        "//iframe[contains(@src, 'recaptcha')]",  # reCAPTCHA iframe
-        "//div[@id='recaptcha']",  # reCAPTCHA div
-        "//*[contains(text(), 'unusual traffic')]",  # Google's CAPTCHA message
-        "//*[contains(text(), 'not a robot')]",  # Common CAPTCHA text
-        "//form[@id='captcha-form']",  # Generic CAPTCHA form
-    ]
-    
-    for indicator in captcha_indicators:
-        try:
-            element = webdriver.find_element(By.XPATH, indicator)
-            if element.is_displayed():
-                return True
-        except:
-            continue
-    
-    return False
-
-def wait_for_captcha_solution(webdriver, timeout=120):
-    """
-    Waits for user to solve CAPTCHA manually
-    Returns True if CAPTCHA was solved, False if timeout
-    """
-    log.warning("CAPTCHA DETECTED! ")
-    log.warning("Please solve the CAPTCHA in the browser window...")
-    log.warning(f"Waiting up to {timeout} seconds...")
-    
-    start_time = time.time()
-    last_log_time = 0
-    
-    while time.time() - start_time < timeout:
-        # Check if CAPTCHA is still present
-        if not check_for_captcha(webdriver):
-            log.info("CAPTCHA solved! Waiting for page to stabilize...")
-            time.sleep(8)  # Increased from 5 to 8 seconds for page stabilization
-            
-            # Verify page is actually ready by checking for search box
-            try:
-                search_box = webdriver.find_element(By.NAME, "q")
-                if search_box.is_displayed():
-                    log.info("Page is ready! Continuing...")
-                    time.sleep(2)  # Extra buffer
-                    return True
-            except:
-                log.info("Waiting for page elements to load...")
-                time.sleep(5)  # Increased wait
-                # Try one more time
-                try:
-                    search_box = webdriver.find_element(By.NAME, "q")
-                    if search_box:
-                        log.info("Page is ready! Continuing...")
-                        time.sleep(2)  # Extra buffer
-                        return True
-                except:
-                    pass
-            
-            return True
-        
-        # Show countdown every 10 seconds
-        elapsed = int(time.time() - start_time)
-        if elapsed > 0 and elapsed % 10 == 0 and elapsed != last_log_time:
-            remaining = timeout - elapsed
-            log.info(f"Still waiting... {remaining} seconds remaining")
-            last_log_time = elapsed
-        
-        time.sleep(1)
-    
-    log.error("CAPTCHA timeout - could not verify solution")
     return False
 
 def find_elements(webdriver, selectors:list, element_type:str="elements"):
@@ -315,7 +245,7 @@ def find_elements(webdriver, selectors:list, element_type:str="elements"):
 
 def thumbnails_fallback(webdriver):
     """
-    Fallback function to find images  by characteristics if all selectors fail
+    Fallback function to find images by characteristics if all selectors fail
     """
     log.info("Attempting to find thumbnails using fallback")
     all_images = webdriver.find_elements(By.TAG_NAME, "img")
@@ -330,95 +260,40 @@ def thumbnails_fallback(webdriver):
         except:
             continue
     
-    log.info(f"Fallback found {len(thumbnails)}")
+    log.info(f"Fallback found {len(thumbnails)} thumbnails")
     return thumbnails
 
-def get_images_from_google(webdriver, search_request:str ,delay:int, max_images:int):
+
+def get_images_from_google(webdriver, search_request:str, delay:int, max_images:int):
     """
-    Gets images from google search via the following steps:
-    1) uses webdriver to get to google images page and sleeps for 5 seconds for any cookies etc
-    2) finds search box and enters search query and presses enter/return
+    Gets images from google search with improved stale element handling
     """
     def scroll_down(wd):
         """
-        Scrolls down the webpage to load more images
-        Returns True if page height changed (more content loaded), False if at bottom
+        Scrolls down with random delay for more human-like behavior
         """
-        last_height = wd.execute_script("return document.body.scrollHeight")
         wd.execute_script("window.scrollTo(0, document.body.scrollHeight);")
-        time.sleep(delay)
-        new_height = wd.execute_script("return document.body.scrollHeight")
-        return new_height > last_height
-        
+        time.sleep(delay + random.uniform(0.3, 0.8))
+    
     cookies_loaded = load_cookies(webdriver)
-
     log.info("Navigating to Google Images")
-
     webdriver.get("https://google.com/imghp?hl=en")
-    time.sleep(2)  # Give page time to load
+    time.sleep(1)
 
     #cookie handling in case of expiration or otherwise
     if not cookies_loaded:
         consent_handled = handle_cookies(webdriver, accept=True, delay=5)
         if consent_handled:
             save_cookies(webdriver)
-    
-    # Check for CAPTCHA before proceeding
-    if check_for_captcha(webdriver):
-        if not wait_for_captcha_solution(webdriver, timeout=CAPTCHA_WAIT_TIME):
-            log.error("Could not proceed due to unsolved CAPTCHA")
-            return set()
-        
-        # After solving CAPTCHA, reload the Google Images page
-        log.info("Reloading Google Images after CAPTCHA...")
-        webdriver.get("https://google.com/imghp?hl=en")
-        time.sleep(5)  # Increased from 3 to 5 seconds
-        
-        # Check again for CAPTCHA after reload
-        if check_for_captcha(webdriver):
-            log.warning("CAPTCHA appeared again after reload")
-            if not wait_for_captcha_solution(webdriver, timeout=CAPTCHA_WAIT_TIME):
-                log.error("Could not proceed due to unsolved CAPTCHA on reload")
-                return set()
-            time.sleep(5)  # Increased from 3 to 5 seconds
 
     #Finding search box and entering query:
     try:
-        # Wait for search box to be present and interactable
-        search = WebDriverWait(webdriver, 20).until(  # Increased from 15 to 20 seconds
-            EC.element_to_be_clickable((By.NAME, "q"))
-        )
-        time.sleep(2)  # Increased from 1 to 2 seconds before typing
-        search.clear()  # Clear any existing text
+        search = webdriver.find_element(By.NAME, "q") 
         search.send_keys(search_request) 
         search.send_keys(Keys.RETURN)
-        time.sleep(5)  # Increased from 4 to 5 seconds wait for results to load
-        
-        # Check for CAPTCHA after search
-        if check_for_captcha(webdriver):
-            log.warning("CAPTCHA appeared after search")
-            if not wait_for_captcha_solution(webdriver, timeout=CAPTCHA_WAIT_TIME):
-                log.error("Could not proceed due to CAPTCHA after search")
-                return set()
-            # Retry the search after CAPTCHA
-            log.info("Retrying search after CAPTCHA...")
-            search = WebDriverWait(webdriver, 15).until(
-                EC.element_to_be_clickable((By.NAME, "q"))
-            )
-            search.clear()
-            search.send_keys(search_request)
-            search.send_keys(Keys.RETURN)
-            time.sleep(5)
-            
-    except TimeoutException:
-        log.error("Search box not found - possible CAPTCHA or page load issue")
-        if DEBUG_MODE:
-            save_page_source(webdriver, "search_box_timeout")
-        return set()
+        time.sleep(2)
     except Exception as e:
         log.error(f"Failed to enter search query: {e}")
-        if DEBUG_MODE:
-            save_page_source(webdriver, "search_error")
         return set()
     
     log.info(f"Searching for images of {search_request}")
@@ -428,18 +303,11 @@ def get_images_from_google(webdriver, search_request:str ,delay:int, max_images:
     skips = 0
     successful_thumbnail_selector = None
     successful_fullsize_selector = None
-    processed_count = 0
+    processed_count = 0  # Track how many thumbnails we've already processed
 
     #loop for image finding:
     while len(image_urls) < max_images:
-        # Check for CAPTCHA during scraping
-        if check_for_captcha(webdriver):
-            if not wait_for_captcha_solution(webdriver, timeout=CAPTCHA_WAIT_TIME):
-                log.error("CAPTCHA appeared during scraping and was not solved")
-                break
-        
-        # Scroll and check if more content loaded
-        can_scroll = scroll_down(webdriver)
+        scroll_down(webdriver)
     
         #click show more button if it exists
         try:
@@ -448,142 +316,57 @@ def get_images_from_google(webdriver, search_request:str ,delay:int, max_images:
             log.info("Clicked 'Show more results' button")
             time.sleep(2)
         except NoSuchElementException:
-            if not can_scroll:
-                log.info("Cannot scroll further and no 'Show more' button, stopping")
+            pass
+
+        #Find fresh batch of thumbnails
+        thumbnails, t_selector = find_elements(webdriver, THUMBNAIL_SELECTORS, "thumbnails")
+
+        #if no thumbnail selector works then use image characteristics fallback
+        if not thumbnails:
+            thumbnails = thumbnails_fallback(webdriver)
+            if not thumbnails:
+                log.error("All thumbnail selectors and fallback methods failed")
                 break
         
-        # Try to scope to main image grid to avoid suggestion chips
-        try:
-            # Target the main results grid container
-            grid = webdriver.find_element(By.CSS_SELECTOR, "div#islrg")
-            thumbnails = grid.find_elements(By.TAG_NAME, "img")
-            
-            # Filter more aggressively:
-            # 1. Must have reasonable thumbnail size
-            # 2. Must not be in suggestion chips or related searches
-            # 3. Must have valid src attribute
-            filtered_thumbnails = []
-            for thumb in thumbnails:
-                try:
-                    # Check size
-                    if thumb.size.get('width', 0) < 50 or thumb.size.get('height', 0) < 50:
-                        continue
-                    
-                    # Check if it's actually a search result image (has data-* attributes)
-                    # Skip if parent contains suggestion/chip/related keywords
-                    parent = thumb.find_element(By.XPATH, "./..")
-                    parent_class = parent.get_attribute("class") or ""
-                    parent_id = parent.get_attribute("id") or ""
-                    
-                    # Skip if in suggestion chips (usually at top of page)
-                    if any(keyword in parent_class.lower() for keyword in ['chip', 'suggestion', 'related', 'search']):
-                        continue
-                    if any(keyword in parent_id.lower() for keyword in ['suggestion', 'related']):
-                        continue
-                    
-                    # Check if thumbnail is in viewport position (suggestions usually at top)
-                    location = thumb.location
-                    if location.get('y', 0) < 200:  # Skip elements in first 200px (suggestion area)
-                        continue
-                    
-                    # Must have src attribute
-                    src = thumb.get_attribute("src")
-                    if not src:
-                        continue
-                    
-                    filtered_thumbnails.append(thumb)
-                except:
-                    continue
-            
-            thumbnails = filtered_thumbnails
-            t_selector = "div#islrg img (filtered)"
-            log.info(f"Scoped and filtered thumbnails in grid: {len(thumbnails)}")
-        except Exception as e:
-            log.debug(f"Error scoping thumbnails from grid: {e}")
-            thumbnails = []
-            t_selector = None
-
-        #find thumbnails using selectors if scoping failed
-        if not thumbnails:
-            thumbnails, t_selector = find_elements(webdriver, THUMBNAIL_SELECTORS, "thumbnails")
-
-            #if no thumbnail selector works then use image characteristics fallback
-            if not thumbnails:
-                thumbnails = thumbnails_fallback(webdriver)
-                if not thumbnails:
-                    log.error("All thumbnail selectors and fallback methods failed")
-                    break
-            
-        #remembering fallbacks that worked
+        #remember which selector worked
         if t_selector and not successful_thumbnail_selector:
             successful_thumbnail_selector = t_selector
             log.info(f"Using thumbnail selector: {t_selector}")
 
-        log.info(f"Processing {len(thumbnails)} thumbnails")
+        # Process only NEW thumbnails (skip ones we already processed)
+        new_thumbnails = thumbnails[processed_count:]
+        log.info(f"Processing {len(new_thumbnails)} new thumbnails")
 
-        # Process thumbnails by index to avoid stale elements
-        start_index = processed_count
-        images_to_process = min(20, len(thumbnails) - start_index)
-        
-        for offset in range(images_to_process):
+        for idx, thumbnail in enumerate(new_thumbnails):
             if len(image_urls) >= max_images: 
                 break
-            
-            current_index = start_index + offset
 
-            # Refetch fresh thumbnails for each click to prevent stale references
             try:
-                # Scope to grid first with same filtering
-                try:
-                    grid = webdriver.find_element(By.CSS_SELECTOR, "div#islrg")
-                    fresh_thumbnails = grid.find_elements(By.TAG_NAME, "img")
-                    
-                    # Apply same filtering
-                    filtered = []
-                    for thumb in fresh_thumbnails:
-                        try:
-                            if thumb.size.get('width', 0) < 50:
-                                continue
-                            location = thumb.location
-                            if location.get('y', 0) < 200:  # Skip top 200px
-                                continue
-                            parent = thumb.find_element(By.XPATH, "./..")
-                            parent_class = parent.get_attribute("class") or ""
-                            if any(kw in parent_class.lower() for kw in ['chip', 'suggestion', 'related', 'search']):
-                                continue
-                            filtered.append(thumb)
-                        except:
-                            continue
-                    fresh_thumbnails = filtered
-                except:
-                    fresh_thumbnails, _ = find_elements(webdriver, THUMBNAIL_SELECTORS, "thumbnails")
-                
-                if not fresh_thumbnails or current_index >= len(fresh_thumbnails):
-                    break
-                
-                fresh_thumbnails[current_index].click()
-                time.sleep(delay)
+                # Click thumbnail with small random delay
+                thumbnail.click()
+                time.sleep(delay + random.uniform(0.1, 0.3))
+            except (ElementClickInterceptedException, StaleElementReferenceException) as e:
+                log.debug(f"Couldn't click thumbnail: {e}")
                 processed_count += 1
-                
-            except ElementClickInterceptedException:
                 skips += 1
-                processed_count += 1
                 continue
             except Exception as e:
-                log.debug(f"Error clicking thumbnail {current_index}: {e}")
-                skips += 1
+                log.debug(f"Unexpected error clicking: {e}")
                 processed_count += 1
+                skips += 1
                 continue
             
             #find full size images using selectors
             full_images, f_selector = find_elements(webdriver, FULL_IMAGE_SELECTORS, "full-size images")
 
-            #if no full image selectors work then log error and continue
+            #if no full image selectors work then log and continue
             if not full_images:
+                log.debug("No full image found for this thumbnail")
+                processed_count += 1
                 skips += 1
                 continue
 
-            #remembering successful full image selector
+            #remember successful full image selector
             if f_selector and not successful_fullsize_selector:
                 successful_fullsize_selector = f_selector
                 log.info(f"Using full image selector: {f_selector}")
@@ -591,26 +374,33 @@ def get_images_from_google(webdriver, search_request:str ,delay:int, max_images:
             for img in full_images:
                 try:
                     src = img.get_attribute("src")
+                    
                     if not src or "http" not in src:
                         continue
-                        
+                    
                     if src in image_urls:
-                        max_images+=1
                         skips += 1
                         break
-
+                    
                     image_urls.add(src)
                     log.info(f"Found {len(image_urls)}/{max_images}")
                     break
                     
                 except Exception as e:
-                    log.debug(f"Error getting src from full image: {e}")
+                    log.debug(f"Error getting src: {e}")
                     continue
+            
+            processed_count += 1
 
-        #Safety check:
-        if len(thumbnails) < 10:
-            log.warning("Very few thumbnails found, possibly reached end of results")
+        #Safety checks:
+        if len(thumbnails) < 20 and len(image_urls) < max_images:
+            log.warning("Few thumbnails remaining, possibly reached end of results")
             break
+        
+        # If we processed all current thumbnails, continue to scroll for more
+        if processed_count >= len(thumbnails):
+            log.info("Processed all current thumbnails, scrolling for more...")
+            continue
     
     #LOG SELECTOR SUMMARY:
     log.info("\n" + "="*50)
@@ -618,7 +408,7 @@ def get_images_from_google(webdriver, search_request:str ,delay:int, max_images:
     log.info(f"Thumbnail selector: {successful_thumbnail_selector or 'Fallback method used'}")
     log.info(f"Full-size selector: {successful_fullsize_selector or 'None found'}")
     log.info(f"Image urls collected: {len(image_urls)}")
-    log.info(f"Duplicates skipped: {skips}")
+    log.info(f"Duplicates/failures skipped: {skips}")
     log.info("="*50)
 
     return image_urls
@@ -631,19 +421,19 @@ def valid_image(image):
     #min size checks:
     width, height = image.size
     if width < 200 or height < 200:
-        log.info(f"Image is too small: {width}x{height}")
+        log.debug(f"Image is too small: {width}x{height}")
         return False, "too_small"
     
     #aspect ratio checks:
     aspect_ratio = max(width,height)/min(width,height)
     if aspect_ratio > 3: #arbitrary aspect ratio limit of 3:1
-        log.info(f"Image has poor aspect ratio: {aspect_ratio:.2f}")
+        log.debug(f"Image has poor aspect ratio: {aspect_ratio:.2f}")
         return False, "poor_aspect_ratio"
     
     return True, "valid"
 
 
-def download_image(original_path:str, rejected_path:str, url:str, file_name:str): #function to download image
+def download_image(original_path:str, rejected_path:str, url:str, file_name:str):
     """
     Downloads image from urls and saves to relevant path
     returns 'success', 'failed' or 'rejected' based on outcome
@@ -664,16 +454,16 @@ def download_image(original_path:str, rejected_path:str, url:str, file_name:str)
 
         #path set up based on rejection reason:
         if not validity:
-            reject_path = os.path.join(rejected_path,reason)
+            reject_path = os.path.join(rejected_path, reason)
             if not os.path.exists(reject_path):
                 os.makedirs(reject_path)
             #file path for rejected image of that reason, save image in path as jpeg
             file_path = os.path.join(reject_path, file_name)
             with open(file_path, "wb") as f:
-                image.save(f, "JPEG", quality=95)
+                image.save(f, "JPEG", quality=85)
             
             #log and rejection returned
-            log.info(f"Image rejected due to {reason}, saved to {file_path}")
+            log.info(f"Image rejected due to {reason}: {file_name}")
             return "rejected"
         
         #accepted image handling:
@@ -681,7 +471,7 @@ def download_image(original_path:str, rejected_path:str, url:str, file_name:str)
         with open(file_path,"wb") as f:
             image.save(f, "JPEG", quality=95)
 
-        log.info(f"Image {file_name} successfully downloaded and saved to {file_path}")
+        log.info(f"✓ Downloaded: {file_name} ({image.size[0]}x{image.size[1]})")
         return "success"
     except requests.exceptions.RequestException as e:
         log.error(f"Failed to download image from {url}: {e}")
