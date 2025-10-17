@@ -260,7 +260,7 @@ def get_images_from_google(webdriver, search_request:str ,delay:int, max_images:
     1) uses webdriver to get to google images page and sleeps for 5 seconds for any cookies etc
     2) finds search box and enters search query and presses enter/return
     """
-    def scroll_down(webdriver):
+    def scroll_down(wd):
         """
         Scrolls down the webpage to load more images
         1) Executes JavaScript to scroll to the bottom of the page (document.body.scrollHeight)
@@ -269,40 +269,73 @@ def get_images_from_google(webdriver, search_request:str ,delay:int, max_images:
         wd.execute_script("window.scrollTo(0, document.body.scrollHeight);")
         time.sleep(delay)
         #handle edge cases for this such as looks like you have reached the end of the page
-    
-    wd.get("https://google.com/imghp?hl=en") #gets page to google images url
-    time.sleep(5) # any cookies that need to be accepted or rejected can be done in this delay period
+    cookies_loaded = load_cookies(webdriver)
+
+    log.info("Navigating to Google Images")
+
+    webdriver.get("https://google.com/imghp?hl=en") #gets page to google images url
+    time.sleep(1)
+
+    #cookie handling in case of expiration or otherwise
+    if not cookies_loaded:
+        consent_handled = handle_cookies(webdriver, accept=True, delay=5)
+
+        if consent_handled:
+            save_cookies(webdriver) #saves updated cookies for future sessions
+        
 
     #Finding search box and entering query:
-    search = wd.find_element(By.NAME, "q") 
-    search.send_keys(search_query) 
-    search.send_keys(Keys.RETURN) 
+    try:
+        search = webdriver.find_element(By.NAME, "q") 
+        search.send_keys(search_query) 
+        search.send_keys(Keys.RETURN)
+        time.sleep(2)
+    except Exception as e:
+        log.error(f"Failed to enter search query: {e}")
+        return set() #returns empty set in error case
     
+    log.info(f"Searching for images of {search_request}")
+
+    #url set, counter, thumbnail and fullsize initialisation
     image_urls = set() #makes a set to store image urls to prevent duplicate urls
-    skips = 0 #counter to keep track of skipped images due to duplicates
+    skips = 0
+    successful_thumbnail_selector = None
+    successful_fullsize_selector = None
 
-    while (len(image_urls)+skips) < max_images: #loops until we have enough image urls as requested by function_call
-        scroll_down(wd)
-
-
-        #sclick show more button if it exists if no such element exists just move on
+    #loop for image finding:
+    while len(image_urls) < max_images:
+        scroll_down(wd=webdriver)
+    
+        #click show more button if it exists if no such element exists just move on
         try:
-            show_more = wd.find_element(By.CLASS_NAME, "mye4qd")
+            show_more = webdriver.find_element(By.CSS_SELECTOR, ".mye4qd")
             show_more.click()
+            log.info("Clicked 'Show more results' button")
             time.sleep(2)
         except NoSuchElementException:
             pass
-        
-        #find image thumbnails using CSS selector with images of rg_i class
-        thumbnails = wd.find_elements(By.CSS_SELECTOR, "img.rg_i") 
-        if not thumbnails: #no thumnnails found then break out of the while loop
-            print("No more images found, breaking out of loop")
-            break
 
-        for image in thumbnails[len(image_urls)+skips]:
-            if len(image_urls) >= max_images:
+        #Fall back selector thumbnails:
+        thumbnails, t_selector = find_elements(wd, THUMBNAIL_SELECTORS, "thumbnails")
+
+        #if no thumbnail selector works then use image characteristics fallback
+        if not thumbnails:
+            thumbnails = thumbnails_fallback(webdriver)
+            if not thumbnails:
+                log.error("All thumbnail selectors and fallback methods failed")
+                break
+        
+        #rememebering fallbacks that worked
+        if t_selector and not successful_thumbnail_selector:
+            successful_thumbnail_selector = t_selector
+            log.info(f"Using thumbnail selector: {t_selector}")
+
+        log.info(f"Processing {len(thumbnails)} thumbnails")
+
+        for image in thumbnails[len(image_urls) + skips:]:
+            if len(image_urls) >= max_images: 
                 break #breaks out of loop if enough urls found
-            
+
             #try to get full image by clicking on thumbnail to avoid resizing issues
             try:
                 image.click()
@@ -310,19 +343,94 @@ def get_images_from_google(webdriver, search_request:str ,delay:int, max_images:
             except ElementClickInterceptedException:
                 continue #if click fails then continue to the next thumbnail in the loop
             
-            images = wd.find_elements(By.CLASS_NAME, "sFlh5c") #finds all elements with that class
-            for img in images: #loops through all returned images
-                if img.get_attribute("src") in image_urls: #checks if src attribute in set to prevent looping
+            #find full size images using selectors
+            full_images, f_selector = find_elements(wd, FULL_IMAGE_SELECTORS, "full-size images")
+
+            #if no full image selectors work then log error and continue
+            if not full_images:
+                log.error("All full image selectors failed, skipping this thumbnail")
+                skips += 1
+                continue
+
+            #remembering successful full image selector
+            if f_selector and not successful_fullsize_selector:
+                successful_fullsize_selector = f_selector
+                log.info(f"Using full image selector: {f_selector}")
+
+            for img in full_images: #loops through all returned images
+                src = img.get_attribute("src")
+                if src in image_urls: #checks if src attribute in set to prevent looping
                     max_images += 1 #inrements max images to ensure we get enough unique images
                     skips += 1 #increments skips counter 
                     break #breaks out of for loop to go to next thumbnail
 
-                if img.get_attribute("src") and "http" in img.get_attribute("src"): #checks if src attribute exists # and contains http
-                    image_urls.add(img.get_attribute("src"))
+                if src and "http" in src: #checks if src attribute exists and contains http
+                    image_urls.add(src)
                     print(f"Found {len(image_urls)}") #logs each found image (just for tracking progress)
 
+        #find image thumbnails using CSS selector with images of rg_i class
+        thumbnails = webdriver.find_elements(By.CSS_SELECTOR, "img.rg_i") 
+        if not thumbnails: #no thumnnails found then break out of the while loop
+            print("No more images found, breaking out of loop")
+            break
+        
+        #Process each thumbnail and click to get full image (account for skips and max image count)
+        for image in thumbnails[len(image_urls)+skips]:
+            if len(image_urls) >= max_images:
+                break #breaks out of loop if enough urls found
+            
+            try:
+                image.click()
+                time.sleep(delay)
+            except ElementClickInterceptedException:
+                log.debug("Click intercepted, skipping to next thumbnail")
+                continue
+            except Exception as e:
+                log.error(f"Error clicking thumbnail, click failed: {e}")
+                continue
+        
+            #finding the full size images with selectors:
+            actual_images, full_selector = find_elements(webdriver, FULL_IMAGE_SELECTORS, "full-size images")
+
+            #check which selector worked
+            if full_selector and not successful_fullsize_selector:
+                successful_fullsize_selector = full_selector
+                log.info(f"Using full image size selector: {full_selector}")
+
+            #Process each full size image url found
+            for actual_image in actual_images:
+                try:
+                    src = actual_image.get_attribute("src")
+                    if not src or "http"  not in src:
+                        continue #skips if src attribute is invalid
+
+                    #duplicate check
+                    if src in image_urls:
+                        skips+=1
+                        break
+
+                    image_urls.add(src)
+                    log.info(f"Found {len(image_urls)}/{max_images} so far.")
+                    break
+                except Exception as e:
+                    log.debug(f"Error extracting full image src: {e}")
+                    continue
+        #Safety checks:
+        if len(thumbnails) < 10 and len(image_urls) < max_images:
+            log.warning("Far few thumbnails found, possibly reached end of results")
+            break
+    
+    #LOG SELECTTOR SUMMARY:
+    log.info("\n" + "="*50)
+    log.info("SELECTOR SUMMARY:")
+    log.info(f"Thumbnail selector: {successful_thumbnail_selector or 'Fallback method used'}")
+    log.info(f"Full-size selector: {successful_fullsize_selector or 'None found'}")
+    log.info(f"Image urls collected: {len(image_urls)}")
+    log.info(f"Duplicates skipped: {skips}")
+    log.info("="*50)
 
     return image_urls
+
 
 def download_image(download_path, url, file_name): #function to download image
     """
