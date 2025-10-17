@@ -5,4 +5,4 @@ This is purely a learning exercise and is meant to be useful for dataset creatio
 
 Please note that as webscraping is a new field for me, claude was used in providing suggestions such as cookies handling functionality and in helping me implement the undetected chromedriver.
 
-Installation tools will be coming soon (once I embarassingly get my pypi account activated)
+Installation tools will be coming soon (once I embarassingly get my pypi account activated).
