@@ -1,5 +1,5 @@
 [project]
-name = "image-scraper"
+name = "g-image-scraper"
 version = "0.1.0"
 description = "Python package to download images from Google images"
 readme = "README.md"
