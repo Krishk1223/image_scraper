@@ -50,7 +50,6 @@ REJECT_COOKIES_SELECTORS = [
 # LOG SETUP:
 logging.basicConfig( #logger setup in info mode with details about time, lvl and message
     level=logging.INFO, 
-    filename="image_scraper.log", #log file name,
     format= "%(asctime)s - %(levelname)s - %(message)s",
     handlers= [#log config
         logging.FileHandler("image_scraper.log"), #logs to file
@@ -87,24 +86,24 @@ def main():
     
     #Headless setup:
     if HEADLESS:
-        chrome_options.add_argument("--headless")
+        driver_options.add_argument("--headless=new")
         log.info("Running driver in headless mode")
 
     #Additional options to avoid detection:
-    chrome_options.add_argument("--disable-blink-features=AutomationControlled")
-    chrome_options.add_argument("--no-sandbox")
-    chrome_options.add_argument("--disable-dev-shm-usage")
+    driver_options.add_argument("--disable-blink-features=AutomationControlled")
+    driver_options.add_argument("--no-sandbox")
+    driver_options.add_argument("--disable-dev-shm-usage")
 
     #webdriver instance with options:
     wd = webdriver.Chrome(options=driver_options)
 
     try:
         #call get images function and download images from them
-        image_urls = get_images_from_google(webdriver=wd, search_request=search_query, delay:int=1, max_images:int =max_images)
+        image_urls = get_images_from_google(webdriver=wd, search_request=query, delay=1, max_images=max_images)
 
         #No images found, saves page source if in debug mode
         if not image_urls:
-            logger.error("No images found, please check selectors updated selectors or try a different query")
+            log.error("No images found, please check selectors updated selectors or try a different query")
             if DEBUG_MODE:
                 save_page_source(wd, "failed_search")
             return
@@ -114,15 +113,15 @@ def main():
 
         #Download images based on found urls
         for i, url in enumerate(image_urls):
-            download_image(original_path=original_path, rejected_path=rejected_path, url=url, filename=f"{search_query}_{i+1}.png")
+            result = download_image(original_path=original_path, rejected_path=rejected_path, url=url, file_name=f"{query}_{i+1}.jpg")
             download_stats[result] += 1
 
         #Logger summary of downloads:
         log.info("\n" + "+"*50)
         log.info("Download summary:")
-        log.info(f"Successful downloads: {download_stats['sucess']}")
-        log.info(f"Failed downloads: {download_stats["failed"]}")
-        log.info(f"Rejected downloads: {download_stats["rejected"]}")
+        log.info(f"Successful downloads: {download_stats['success']}")
+        log.info(f"Failed downloads: {download_stats['failed']}")
+        log.info(f"Rejected downloads: {download_stats['rejected']}")
         log.info(f"Total attempts: {len(image_urls)}")
         log.info("+"*50)
 
@@ -165,7 +164,7 @@ def load_cookies(webdriver, filename:str = "google_cookies.pkl"):
 
     # try to load cookies from google.com using the pkl file
     try:
-        wd.get("https://google.com") #navigate to google to set domain for cookies
+        webdriver.get("https://google.com") #navigate to google to set domain for cookies
         time.sleep(2)
 
         with open(filename, "rb") as f: #opens file in read binary mode
@@ -198,17 +197,17 @@ def handle_cookies(webdriver, accept:bool=True, delay:int=5):
     # tries each selector in list till it works, clicks on relevant button if found
     for selector in selectors:
         try:
-            method = By.XPath if selector.startswith("//") else By.CSS_SELECTOR
-            button = WebDriverWait(webdriver, delay).until(EC.element_to_be_clickable(method, selector))
+            method = By.XPATH if selector.startswith("//") else By.CSS_SELECTOR
+            button = WebDriverWait(webdriver, delay).until(EC.element_to_be_clickable((method, selector)))
             button.click()
             log.info(f"Cookies {action}ed")
             time.sleep(1) #wait for 2 seconds after clicking
             return True
         except TimeoutException: #didn't find anything with selector
-            log.info(f"No action found using {selector}, trying next selector")
+            log.debug(f"No action found using {selector}, trying next selector")
             continue
         except Exception as e:
-            log.error("Error while trying to {action} cookies using {selector}: {e}")
+            log.error(f"Error while trying to {action} cookies using {selector}: {e}")
             continue
 
     log.info("No cookie pop up found or selectors failed")
@@ -220,13 +219,13 @@ def find_elements(webdriver, selectors:list, element_type:str="elements"):
     """
     for selector in selectors:
         try:
-            elements = wd.find_elements(By.CSS_SELECTOR, selector)
+            elements = webdriver.find_elements(By.CSS_SELECTOR, selector)
             if elements:
                 log.info(f"Found {len(elements)} {element_type} using selector: {selector}")
                 return elements, selector
-            except Exception as e:
-                log.debug(f"Selector {selector} failed: {e}")
-                continue
+        except Exception as e:
+            log.debug(f"Selector {selector} failed: {e}")
+            continue
 
     #if no selectors work error raised and empty list returned
     log.warning(f"All selectors failed for {element_type}, please check for updates")
@@ -237,7 +236,7 @@ def thumbnails_fallback(webdriver):
     Fallback function to find images  by characteristics if all selectors fail
     """
     log.info("Attempting to find thumbnails using fallback")
-    all_images = wd.find_elements(By.TAG_NAME, "img")
+    all_images = webdriver.find_elements(By.TAG_NAME, "img")
     thumbnails = []
     for image in all_images:
         try:
@@ -287,7 +286,7 @@ def get_images_from_google(webdriver, search_request:str ,delay:int, max_images:
     #Finding search box and entering query:
     try:
         search = webdriver.find_element(By.NAME, "q") 
-        search.send_keys(search_query) 
+        search.send_keys(search_request) 
         search.send_keys(Keys.RETURN)
         time.sleep(2)
     except Exception as e:
@@ -304,7 +303,7 @@ def get_images_from_google(webdriver, search_request:str ,delay:int, max_images:
 
     #loop for image finding:
     while len(image_urls) < max_images:
-        scroll_down(wd=webdriver)
+        scroll_down(webdriver)
     
         #click show more button if it exists if no such element exists just move on
         try:
@@ -316,7 +315,7 @@ def get_images_from_google(webdriver, search_request:str ,delay:int, max_images:
             pass
 
         #Fall back selector thumbnails:
-        thumbnails, t_selector = find_elements(wd, THUMBNAIL_SELECTORS, "thumbnails")
+        thumbnails, t_selector = find_elements(webdriver, THUMBNAIL_SELECTORS, "thumbnails")
 
         #if no thumbnail selector works then use image characteristics fallback
         if not thumbnails:
@@ -344,7 +343,7 @@ def get_images_from_google(webdriver, search_request:str ,delay:int, max_images:
                 continue #if click fails then continue to the next thumbnail in the loop
             
             #find full size images using selectors
-            full_images, f_selector = find_elements(wd, FULL_IMAGE_SELECTORS, "full-size images")
+            full_images, f_selector = find_elements(webdriver, FULL_IMAGE_SELECTORS, "full-size images")
 
             #if no full image selectors work then log error and continue
             if not full_images:
@@ -366,55 +365,8 @@ def get_images_from_google(webdriver, search_request:str ,delay:int, max_images:
 
                 if src and "http" in src: #checks if src attribute exists and contains http
                     image_urls.add(src)
-                    print(f"Found {len(image_urls)}") #logs each found image (just for tracking progress)
+                    log.info(f"Found {len(image_urls)}") #logs each found image (just for tracking progress)
 
-        #find image thumbnails using CSS selector with images of rg_i class
-        thumbnails = webdriver.find_elements(By.CSS_SELECTOR, "img.rg_i") 
-        if not thumbnails: #no thumnnails found then break out of the while loop
-            print("No more images found, breaking out of loop")
-            break
-        
-        #Process each thumbnail and click to get full image (account for skips and max image count)
-        for image in thumbnails[len(image_urls)+skips]:
-            if len(image_urls) >= max_images:
-                break #breaks out of loop if enough urls found
-            
-            try:
-                image.click()
-                time.sleep(delay)
-            except ElementClickInterceptedException:
-                log.debug("Click intercepted, skipping to next thumbnail")
-                continue
-            except Exception as e:
-                log.error(f"Error clicking thumbnail, click failed: {e}")
-                continue
-        
-            #finding the full size images with selectors:
-            actual_images, full_selector = find_elements(webdriver, FULL_IMAGE_SELECTORS, "full-size images")
-
-            #check which selector worked
-            if full_selector and not successful_fullsize_selector:
-                successful_fullsize_selector = full_selector
-                log.info(f"Using full image size selector: {full_selector}")
-
-            #Process each full size image url found
-            for actual_image in actual_images:
-                try:
-                    src = actual_image.get_attribute("src")
-                    if not src or "http"  not in src:
-                        continue #skips if src attribute is invalid
-
-                    #duplicate check
-                    if src in image_urls:
-                        skips+=1
-                        break
-
-                    image_urls.add(src)
-                    log.info(f"Found {len(image_urls)}/{max_images} so far.")
-                    break
-                except Exception as e:
-                    log.debug(f"Error extracting full image src: {e}")
-                    continue
         #Safety checks:
         if len(thumbnails) < 10 and len(image_urls) < max_images:
             log.warning("Far few thumbnails found, possibly reached end of results")
@@ -473,12 +425,12 @@ def download_image(original_path:str, rejected_path:str, url:str, file_name:str)
         #path set up based on rejection reason:
         if not validity:
             reject_path = os.path.join(rejected_path,reason)
-                if not os.path.exists(reject_path):
-                    os.makedirs(reject_path)
-            #file path for rejected image of that reason, save image in path as png
+            if not os.path.exists(reject_path):
+                os.makedirs(reject_path)
+            #file path for rejected image of that reason, save image in path as jpeg
             file_path = os.path.join(reject_path, file_name)
             with open(file_path, "wb") as f:
-                image.save(f, "PNG", quality=90)
+                image.save(f, "JPEG", quality=95)
             
             #log and rejection returned
             log.info(f"Image rejected due to {reason}, saved to {file_path}")
@@ -487,7 +439,7 @@ def download_image(original_path:str, rejected_path:str, url:str, file_name:str)
         #accepted image handling:
         file_path = os.path.join(original_path, file_name)
         with open(file_path,"wb") as f:
-            image.save(f, "PNG", quality=95)
+            image.save(f, "JPEG", quality=95)
 
         log.info(f"Image {file_name} successfully downloaded and saved to {file_path}")
         return "success"
@@ -506,7 +458,7 @@ def save_page_source(webdriver, prefix:str = "debug"):
     filename = f"{prefix}_{timestamp}.html"
     try:
         with open(filename, "w", encoding="utf-8") as f:
-            f.write(webdriver.page_source())
+            f.write(webdriver.page_source)
         log.info(f"Page source saved as {filename}")
     except Exception as e:
         log.error(f"Failed to save page source due to error: {e}")
@@ -514,7 +466,3 @@ def save_page_source(webdriver, prefix:str = "debug"):
 if __name__ == "__main__":
     main()
     input("\nPress enter key to exit")
-
-
-
-
