@@ -1,14 +1,68 @@
 [project]
 name = "image-scraper"
 version = "0.1.0"
-description = "Add your description here"
+description = "Python package to download images from Google images"
 readme = "README.md"
 requires-python = ">=3.11"
+license = "MIT"  # CHANGED: Simple string instead of table
+
+authors = [
+    { name = "Krish Kapoor", email = "krishk122703@gmail.com" }
+]
+
+keywords = ["image", "scraper", "selenium", "web-scraping"]
+
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Developers",
+    "Topic :: Software Development :: Libraries :: Python Modules",
+    # REMOVED: "License :: OSI Approved :: MIT License" - no longer needed with SPDX
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+]
+
 dependencies = [
-    "datetime>=5.5",
-    "logging>=0.4.9.6",
-    "pillow>=11.3.0",
-    "requests>=2.32.5",
-    "selenium>=4.36.0",
+    "pillow>=11.0.0",
+    "requests>=2.32.3",
+    "selenium>=4.26.0",
     "undetected-chromedriver>=3.5.5",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=7.0.0",
+    "black>=22.0.0",
+    "ruff>=0.1.0",
+]
+
+[project.urls]
+Repository = "https://github.com/Krishk1223/image_scraper"
+Issues = "https://github.com/Krishk1223/image_scraper/issues"
+
+[project.scripts]
+scrape = "image_scraper.scraper:main"
+google-images-scraper = "image_scraper.scraper:main"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+# FIX 2: Explicitly tell hatchling which files to include
+[tool.hatch.build.targets.wheel]
+packages = ["image_scraper"]  # CHANGED: Specify the package name instead of ["."]
+
+[tool.hatch.build.targets.sdist]
+include = [
+    "image_scraper/",
+    "README.md",
+    "LICENSE",
+    "pyproject.toml",
+]
+
+[dependency-groups]
+dev = [
+    "pytest>=7.0.0",
+    "black>=22.0.0",
+    "ruff>=0.1.0",
 ]
