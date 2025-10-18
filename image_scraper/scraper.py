@@ -302,7 +302,7 @@ def thumbnails_fallback(webdriver):
     return thumbnails
 
 
-def get_images_from_google(webdriver, search_request:str, delay:int, max_images:int):
+def get_images_from_google(webdriver, search_request:str, delay:int, max_images:int, max_allowed_failures:int = 20):
     """
     Gets images from google search with improved stale element handling
     """
@@ -311,12 +311,27 @@ def get_images_from_google(webdriver, search_request:str, delay:int, max_images:
         Scrolls down with random delay for more human-like behavior
         """
         wd.execute_script("window.scrollTo(0, document.body.scrollHeight);")
-        time.sleep(delay + random.uniform(0.3, 0.8))
+        # Increased wait time after scrolling
+        time.sleep(delay + random.uniform(1.0, 2.0))  # Changed from 0.3-0.8 to 1.0-2.0
+    
+    def wait_for_page_load(wd, timeout=5):
+        """
+        Waits for page to finish loading by checking document ready state
+        """
+        try:
+            WebDriverWait(wd, timeout).until(
+                lambda driver: driver.execute_script("return document.readyState") == "complete"
+            )
+            time.sleep(0.5)  # Extra buffer
+            return True
+        except TimeoutException:
+            log.warning("Page load timeout")
+            return False
     
     cookies_loaded = load_cookies(webdriver)
     log.info("Navigating to Google Images")
     webdriver.get("https://google.com/imghp?hl=en")
-    time.sleep(1)
+    wait_for_page_load(webdriver)  # Wait for initial load
 
     #cookie handling in case of expiration or otherwise
     if not cookies_loaded:
@@ -329,7 +344,8 @@ def get_images_from_google(webdriver, search_request:str, delay:int, max_images:
         search = webdriver.find_element(By.NAME, "q") 
         search.send_keys(search_request) 
         search.send_keys(Keys.RETURN)
-        time.sleep(2)
+        wait_for_page_load(webdriver)  # Wait for search results
+        time.sleep(1)  # Extra buffer for images to render
     except Exception as e:
         log.error(f"Failed to enter search query: {e}")
         return set()
@@ -341,17 +357,27 @@ def get_images_from_google(webdriver, search_request:str, delay:int, max_images:
     skips = 0
     successful_thumbnail_selector = None
     successful_fullsize_selector = None
-    processed_count = 0  # Track how many thumbnails we've already processed
+    processed_count = 0
+    consecutive_failures = 0
+    max_failures = max_allowed_failures
+    last_thumbnail_count = 0  # Track if we're making progress
+    
 
     #loop for image finding:
     while len(image_urls) < max_images:
+        if len(image_urls) >= max_images:
+            log.warning(f"Reached max images allowed: {max_images}")
+            break
+
         scroll_down(webdriver)
+        wait_for_page_load(webdriver)  # Wait after scroll
     
         #click show more button if it exists
         try:
             show_more = webdriver.find_element(By.CSS_SELECTOR, ".mye4qd")
             show_more.click()
             log.info("Clicked 'Show more results' button")
+            wait_for_page_load(webdriver)  # Wait after clicking button
             time.sleep(2)
         except NoSuchElementException:
             pass
@@ -371,20 +397,54 @@ def get_images_from_google(webdriver, search_request:str, delay:int, max_images:
             successful_thumbnail_selector = t_selector
             log.info(f"Using thumbnail selector: {t_selector}")
 
-        # Process only NEW thumbnails (skip ones we already processed)
+        # Check if we're stuck (same number of thumbnails)
+        if len(thumbnails) == last_thumbnail_count:
+            consecutive_failures += 1
+            log.warning(f"No new thumbnails loaded ({consecutive_failures}/5)")
+        else:
+            consecutive_failures = 0
+            last_thumbnail_count = len(thumbnails)
+
+        # Process only new thumbnails (skip ones we already processed)
         new_thumbnails = thumbnails[processed_count:]
         log.info(f"Processing {len(new_thumbnails)} new thumbnails")
 
+        if len(new_thumbnails) == 0:
+            log.warning("No new thumbnails to process after scrolling")
+            if consecutive_failures >= 5:
+                log.error("No new thumbnails found, ending search to avoid infinite loop.")
+                break
+            continue
+        
+        #checking target inside loop
         for idx, thumbnail in enumerate(new_thumbnails):
             if len(image_urls) >= max_images: 
                 break
 
             try:
-                # Click thumbnail with small random delay
+                # Wait for thumbnail to be clickable
+                WebDriverWait(webdriver, 3).until(
+                    EC.element_to_be_clickable(thumbnail)
+                )
+                
+                # Scroll element into view before clicking
+                webdriver.execute_script("arguments[0].scrollIntoView({block: 'center'});", thumbnail)
+                time.sleep(0.3)  # Wait for scroll animation
+                
+                # Click thumbnail with increased delay
                 thumbnail.click()
-                time.sleep(delay + random.uniform(0.1, 0.3))
+                time.sleep(delay + random.uniform(0.5, 1.0))  # Increased from 0.1-0.3
+                
+                # Wait for side panel/overlay to load
+                wait_for_page_load(webdriver)
+                
             except (ElementClickInterceptedException, StaleElementReferenceException) as e:
                 log.debug(f"Couldn't click thumbnail: {e}")
+                processed_count += 1
+                skips += 1
+                continue
+            except TimeoutException:
+                log.debug(f"Thumbnail not clickable after timeout")
                 processed_count += 1
                 skips += 1
                 continue
@@ -393,6 +453,9 @@ def get_images_from_google(webdriver, search_request:str, delay:int, max_images:
                 processed_count += 1
                 skips += 1
                 continue
+            
+            # Add wait before finding full-size images
+            time.sleep(0.5)
             
             #find full size images using selectors
             full_images, f_selector = find_elements(webdriver, FULL_IMAGE_SELECTORS, "full-size images")
@@ -411,7 +474,13 @@ def get_images_from_google(webdriver, search_request:str, delay:int, max_images:
 
             for img in full_images:
                 try:
-                    src = img.get_attribute("src")
+                    # Wait for src attribute to be available
+                    src = None
+                    for attempt in range(3):
+                        src = img.get_attribute("src")
+                        if src and "http" in src:
+                            break
+                        time.sleep(0.3)  # Wait between attempts
                     
                     if not src or "http" not in src:
                         continue
@@ -431,11 +500,22 @@ def get_images_from_google(webdriver, search_request:str, delay:int, max_images:
             processed_count += 1
 
         #Safety checks:
+
+        #url target check
+        if len(image_urls) >= max_images:
+            log.info(f"Reached target of {max_images} images")
+            break
+        #thumbnail exhaustion check
         if len(thumbnails) < 20 and len(image_urls) < max_images:
             log.warning("Few thumbnails remaining, possibly reached end of results")
             break
         
-        # If we processed all current thumbnails, continue to scroll for more
+        #consecutive failure check
+        if consecutive_failures >= max_failures:
+            log.error("Maximum consecutive failures reached, ending search to avoid infinite loop.")
+            break
+
+        # processing current thumbnails check
         if processed_count >= len(thumbnails):
             log.info("Processed all current thumbnails, scrolling for more...")
             continue
@@ -450,6 +530,185 @@ def get_images_from_google(webdriver, search_request:str, delay:int, max_images:
     log.info("="*50)
 
     return image_urls
+
+
+# def get_images_from_google(webdriver, search_request:str, delay:int, max_images:int, max_allowed_failures:int = 20):
+#     """
+#     Gets images from google search with improved stale element handling
+#     """
+#     def scroll_down(wd):
+#         """
+#         Scrolls down with random delay for more human-like behavior
+#         """
+#         wd.execute_script("window.scrollTo(0, document.body.scrollHeight);")
+#         time.sleep(delay + random.uniform(0.3, 0.8))
+    
+#     cookies_loaded = load_cookies(webdriver)
+#     log.info("Navigating to Google Images")
+#     webdriver.get("https://google.com/imghp?hl=en")
+#     time.sleep(1)
+
+#     #cookie handling in case of expiration or otherwise
+#     if not cookies_loaded:
+#         consent_handled = handle_cookies(webdriver, accept=True, delay=5)
+#         if consent_handled:
+#             save_cookies(webdriver)
+
+#     #Finding search box and entering query:
+#     try:
+#         search = webdriver.find_element(By.NAME, "q") 
+#         search.send_keys(search_request) 
+#         search.send_keys(Keys.RETURN)
+#         time.sleep(2)
+#     except Exception as e:
+#         log.error(f"Failed to enter search query: {e}")
+#         return set()
+    
+#     log.info(f"Searching for images of {search_request}")
+
+#     #url set, counter, thumbnail and fullsize initialisation
+#     image_urls = set()
+#     skips = 0
+#     successful_thumbnail_selector = None
+#     successful_fullsize_selector = None
+#     processed_count = 0  # Track how many thumbnails we've already processed
+#     consecutive_failures = 0 #track failures for loop safety
+#     max_failures = max_allowed_failures
+    
+
+#     #loop for image finding:
+#     while len(image_urls) < max_images:
+#         if len(image_urls) >= max_images:
+#             log.warning(f"Reached max images allowed: {max_images}")
+#             break
+
+#         scroll_down(webdriver)
+    
+#         #click show more button if it exists
+#         try:
+#             show_more = webdriver.find_element(By.CSS_SELECTOR, ".mye4qd")
+#             show_more.click()
+#             log.info("Clicked 'Show more results' button")
+#             time.sleep(2)
+#         except NoSuchElementException:
+#             pass
+
+#         #Find fresh batch of thumbnails
+#         thumbnails, t_selector = find_elements(webdriver, THUMBNAIL_SELECTORS, "thumbnails")
+
+#         #if no thumbnail selector works then use image characteristics fallback
+#         if not thumbnails:
+#             thumbnails = thumbnails_fallback(webdriver)
+#             if not thumbnails:
+#                 log.error("All thumbnail selectors and fallback methods failed")
+#                 break
+        
+#         #remember which selector worked
+#         if t_selector and not successful_thumbnail_selector:
+#             successful_thumbnail_selector = t_selector
+#             log.info(f"Using thumbnail selector: {t_selector}")
+
+#         # Process only new thumbnails (skip ones we already processed)
+#         new_thumbnails = thumbnails[processed_count:]
+#         log.info(f"Processing {len(new_thumbnails)} new thumbnails")
+
+#         if len(new_thumbnails) == 0:
+#             log.warning("No new thumbnails to process after scrolling")
+#             consecutive_failures += 1
+#             if consecutive_failures >= 5:
+#                 log.error("No new thumbnails found, ending search to avoid infinite loop.")
+#                 break
+#             continue
+#         else:
+#             consecutive_failures = 0  #reset upon success 
+        
+#         #checking target inside loop
+#         for idx, thumbnail in enumerate(new_thumbnails):
+#             if len(image_urls) >= max_images: 
+#                 break
+
+#             try:
+#                 # Click thumbnail with small random delay to avoid bot detection
+#                 thumbnail.click()
+#                 time.sleep(delay + random.uniform(0.1, 0.3))
+#             except (ElementClickInterceptedException, StaleElementReferenceException) as e:
+#                 log.debug(f"Couldn't click thumbnail: {e}")
+#                 processed_count += 1
+#                 skips += 1
+#                 continue
+#             except Exception as e:
+#                 log.debug(f"Unexpected error clicking: {e}")
+#                 processed_count += 1
+#                 skips += 1
+#                 continue
+            
+#             #find full size images using selectors
+#             full_images, f_selector = find_elements(webdriver, FULL_IMAGE_SELECTORS, "full-size images")
+
+#             #if no full image selectors work then log and continue
+#             if not full_images:
+#                 log.debug("No full image found for this thumbnail")
+#                 processed_count += 1
+#                 skips += 1
+#                 continue
+
+#             #remember successful full image selector
+#             if f_selector and not successful_fullsize_selector:
+#                 successful_fullsize_selector = f_selector
+#                 log.info(f"Using full image selector: {f_selector}")
+
+#             for img in full_images:
+#                 try:
+#                     src = img.get_attribute("src")
+                    
+#                     if not src or "http" not in src:
+#                         continue
+                    
+#                     if src in image_urls:
+#                         skips += 1
+#                         break
+                    
+#                     image_urls.add(src)
+#                     log.info(f"Found {len(image_urls)}/{max_images}")
+#                     break
+                    
+#                 except Exception as e:
+#                     log.debug(f"Error getting src: {e}")
+#                     continue
+            
+#             processed_count += 1
+
+#         #Safety checks:
+
+#         #url target check
+#         if len(image_urls) >= max_images:
+#             log.info(f"Reached target of {max_images} images")
+#             break
+#         #thumbnail exhaustion check
+#         if len(thumbnails) < 20 and len(image_urls) < max_images:
+#             log.warning("Few thumbnails remaining, possibly reached end of results")
+#             break
+        
+#         #consecutive failure check
+#         if consecutive_failures >= max_failures:
+#             log.error("Maximum consecutive failures reached, ending search to avoid infinite loop.")
+#             break
+
+#         # processing current thumbnails check
+#         if processed_count >= len(thumbnails):
+#             log.info("Processed all current thumbnails, scrolling for more...")
+#             continue
+    
+#     #LOG SELECTOR SUMMARY:
+#     log.info("\n" + "="*50)
+#     log.info("SELECTOR SUMMARY:")
+#     log.info(f"Thumbnail selector: {successful_thumbnail_selector or 'Fallback method used'}")
+#     log.info(f"Full-size selector: {successful_fullsize_selector or 'None found'}")
+#     log.info(f"Image urls collected: {len(image_urls)}")
+#     log.info(f"Duplicates/failures skipped: {skips}")
+#     log.info("="*50)
+
+#     return image_urls
 
 def valid_image(image):
     """
