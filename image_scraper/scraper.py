@@ -17,6 +17,8 @@ import os
 import logging
 import random
 from datetime import datetime
+from concurrent.futures import ThreadPoolExecutor, as_completed
+from threading import Lock
 
 try:
     from .config import (
@@ -106,7 +108,7 @@ def driver_setup(headless:bool = False):
         return None
 
 
-def main():
+def main(query:str=None, max_images:int=None):
     """
     MAIN FUNCTION:
     """
@@ -122,8 +124,10 @@ def main():
             os.makedirs(path) 
 
     #get user input for query:
-    query:str = input("What images would you like to search for? (Please be detailed): ") #user query
-    max_images:int= int(input("How many images would you like to download?: ")) #max images wanted
+    if query is None:
+        query = input("What images would you like to search for? (Please be detailed): ") #user query
+    if max_images is None:
+        max_images = int(input("How many images would you like to download?: ")) #max images wanted
 
     #starting logs
     log.info(f"Starting image scraper for query: {query} with {max_images} images")
@@ -158,13 +162,48 @@ def main():
                 save_page_source(wd, "failed_search")
             return
 
-        #dictionary for tracking downloads
-        download_stats = {"success":0, "failed":0, "rejected":0}
+            #convert set to list to make sure index can be accessed:
+        image_urls_list= list(image_urls)
+        log.info(f"\n Starting multithreaded download of {len(image_urls_list)} images...")
 
-        #Download images based on found urls
-        for i, url in enumerate(image_urls):
-            result = download_image(original_path=original_path, rejected_path=rejected_path, url=url, file_name=f"{query}_{i+1}.jpg")
-            download_stats[result] += 1
+        #dictionary for tracking downloads and lock for thready safety
+        download_stats = {"success":0, "failed":0, "rejected":0}
+        stats_lock = Lock()
+
+        #multithreaded downloading: Prepare thread pool using 5 for good behaviour
+        max_workers = min(5, len(image_urls_list)) #max 5 threads or less if we have less images
+        log.info(f"Using {max_workers} worker threads\n")
+
+        with ThreadPoolExecutor(max_workers=max_workers) as executor:
+            #submit all download tasks and map to urls:
+            future_to_url = {} #empty dict to see which future belongs to which url
+            for i, url in enumerate(image_urls_list):
+                future = executor.submit( #submit download task to the worker thread
+                    download_image,
+                    original_path=original_path,
+                    rejected_path=rejected_path,
+                    url=url,
+                    file_name=f"{query}_{i+1}.jpg"
+                )
+                future_to_url[future] = (i,url) #map future to index and url as a tuple
+
+                #update stats as futures complete individually
+            completed = 0 
+            for future in as_completed(future_to_url):
+                completed += 1
+                try:
+                    result = future.result() #get download result
+
+                    #update stats with thread-safety:
+                    with stats_lock:
+                        download_stats[result] += 1
+
+                    #Progress log:
+                    log.info(f"Progress: {completed}/{len(image_urls_list)} images downloaded")
+                except Exception as e:
+                    log.error(f"Image download failed - Error in downloading image: {e}")
+                    with stats_lock:
+                        download_stats["failed"] += 1 
 
         #Logger summary of downloads:
         log.info("\n" + "+"*50)
