@@ -11,15 +11,21 @@ In version 0.1.1b (the current release version on PyPi you will have slightly fa
 
 To install the package in terminal (or bash) run:
 
-``` pip install img-scrapr ```
+```bash 
+pip install img-scrapr
+```
 
 Go into a folder (where you wish to store the images) using terminal and run:
 
-``` scrape ```
+```bash
+scrape
+```
 
 Alternatively you can also run the following command in terminal (if scrape does not work):
 
-``` google-images-scraper ```
+```bash
+google-images-scraper
+```
 
 Once the program has begun follow the instructions in the terminal for the questions asked by the program 
 
