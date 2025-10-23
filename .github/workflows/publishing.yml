@@ -58,10 +58,10 @@ jobs:
     runs-on: ubuntu-latest
     
     environment:
-      name: pypi  # This must match what you set up on PyPI
+      name: pypi 
     
     permissions:
-      id-token: write  # CRITICAL: Allows trusted publishing
+      id-token: write
     
     steps:
     - name: Download artifacts
