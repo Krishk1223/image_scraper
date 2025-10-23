@@ -15,7 +15,7 @@ To install the package in terminal (or bash) run:
 pip install img-scrapr
 ```
 
-Go into a folder (where you wish to store the images) using terminal and run:
+Go into a folder (where you wish to store the images) using terminal (or bash) and run:
 
 ```bash
 scrape
