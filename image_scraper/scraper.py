@@ -653,3 +653,4 @@ def save_page_source(webdriver, prefix:str = "debug"):
 if __name__ == "__main__":
     main()
     input("\nPress enter key to exit")
+    #End of script
