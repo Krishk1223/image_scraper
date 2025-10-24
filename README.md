@@ -9,19 +9,19 @@ In version 0.1.1b (the current release version on PyPi) you will have slightly f
 
 #### YOU CAN FINALLY INSTALL IT PEOPLE (still no tests though)
 
-To install the package in terminal (or bash) run:
+To install the package in terminal and run:
 
 ```bash 
 pip install img-scrapr
 ```
 
-Go into a folder (where you wish to store the images) using terminal (or bash) and run:
+Go into a folder (where you wish to store the images) using terminal and run:
 
 ```bash
 scrape
 ```
 
-Alternatively you can also run the following command in terminal (if scrape does not work):
+Alternatively you can also run the following command in terminal (if scrape does not work or is assigned to another command already):
 
 ```bash
 google-images-scraper
