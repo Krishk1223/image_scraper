@@ -10,7 +10,7 @@ authors = [
     { name = "Krish Kapoor", email = "krishk122703@gmail.com" }
 ]
 
-keywords = ["image", "scraper", "selenium", "web-scraping"]
+keywords = ["image", "scraper", "selenium", "web-scraper"]
 
 classifiers = [
     "Development Status :: 3 - Alpha",
