@@ -5,7 +5,7 @@ This is purely a learning exercise and is meant to be useful for dataset creatio
 
 Please note that as webscraping is a new field for me, claude was used in providing suggestions such as cookies handling functionality (mainly the idea of storing it in a pkl file) and it also helped with my learning journey for helping publish the package.
 
-In version 0.1.1b (the current release version on PyPi you will have slightly faster downloads (I hope) due to multithreading support (also new to this so please reach out to me if I have messed up). 
+In version 0.1.1b (the current release version on PyPi) you will have slightly faster downloads (I hope) due to multithreading support (also new to this so please reach out to me if I have messed up). 
 
 #### YOU CAN FINALLY INSTALL IT PEOPLE (still no tests though)
 
